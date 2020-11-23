@@ -58,6 +58,8 @@ struct ParamDesc {
     PostProc custom_post_proc;
 
     std::vector<bool> normalize;
+
+    std::vector<std::string> names_to_remap;
 };
 } // namespace detail
 
@@ -115,10 +117,35 @@ public:
         return *this;
     }
 
-    Params<Net>& cfgPostProc(const std::vector<cv::GMatDesc> &outs,
+    Params<Net>& cfgPostProc(const std::vector<cv::GMatDesc> &out_metas,
                              const PostProc &pp) {
-        desc.out_metas = outs;
+        desc.out_metas        = out_metas;
         desc.custom_post_proc = pp;
+        return *this;
+    }
+
+    Params<Net>& cfgPostProc(std::vector<cv::GMatDesc> &&out_metas,
+                             PostProc &&pp) {
+        desc.out_metas        = std::move(out_metas);
+        desc.custom_post_proc = std::move(pp);
+        return *this;
+    }
+
+    Params<Net>& cfgPostProc(const std::vector<cv::GMatDesc> &out_metas,
+                             const PostProc &pp,
+                             const std::vector<std::string> &names_to_remap) {
+        desc.out_metas        = out_metas;
+        desc.custom_post_proc = pp;
+        desc.names_to_remap   = names_to_remap;
+        return *this;
+    }
+
+    Params<Net>& cfgPostProc(std::vector<cv::GMatDesc> &&out_metas,
+                             PostProc &&pp,
+                             std::vector<std::string> &&names_to_remap) {
+        desc.out_metas        = std::move(out_metas);
+        desc.custom_post_proc = std::move(pp);
+        desc.names_to_remap   = std::move(names_to_remap);
         return *this;
     }
 

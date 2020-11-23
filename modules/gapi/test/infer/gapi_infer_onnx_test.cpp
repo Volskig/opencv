@@ -9,10 +9,11 @@
 #ifdef HAVE_ONNX
 
 #include <stdexcept>
-#include <onnxruntime_cxx_api.h>
-#include <ade/util/iota_range.hpp>
 #include <codecvt> // wstring_convert
 
+#include <onnxruntime_cxx_api.h>
+#include <ade/util/iota_range.hpp>
+#include <ade/util/algorithm.hpp>
 #include <opencv2/gapi/own/convert.hpp>
 #include <opencv2/gapi/infer/onnx.hpp>
 
@@ -137,11 +138,11 @@ inline std::vector<int64_t> toORT(const cv::MatSize &sz) {
 }
 
 inline std::vector<const char*> getCharNames(const std::vector<std::string>& names) {
-    std::vector<const char*> out_vec;
-    for (const auto& el : names) {
-        out_vec.push_back(el.data());
-    }
-    return out_vec;
+    std::vector<const char*> out_ptrs;
+    out_ptrs.reserve(names.size());
+    ade::util::transform(names, std::back_inserter(out_ptrs),
+                         [](const std::string& name) { return name.data(); });
+    return out_ptrs;
 }
 
 template<typename T>
@@ -237,6 +238,25 @@ void remapSSDPorts(const std::unordered_map<std::string, cv::Mat> &onnx,
     remapToIESSDOut({num_detections, detection_boxes, detection_scores, detection_classes}, ssd_output);
 }
 
+void remapRCNNPorts(const std::unordered_map<std::string, cv::Mat> &onnx,
+                          std::unordered_map<std::string, cv::Mat> &gapi) {
+    // Simple copy for outputs
+    const cv::Mat& in_boxes = onnx.at("6379");
+    const cv::Mat& in_scores = onnx.at("6383");
+    GAPI_Assert(in_boxes.depth()  == CV_32F);
+    GAPI_Assert(in_scores.depth() == CV_32F);
+    cv::Mat& out_boxes = gapi.at("out1");
+    cv::Mat& out_scores = gapi.at("out2");
+
+    copyToOut<float>(in_boxes, out_boxes);
+    copyToOut<float>(in_scores, out_scores);
+}
+
+void reallocSSDPort(const std::unordered_map<std::string, cv::Mat> &/*onnx*/,
+                          std::unordered_map<std::string, cv::Mat> &gapi) {
+    gapi["detection_boxes"].create(1000, 3000, CV_32FC3);
+}
+
 class ONNXtest : public ::testing::Test {
 public:
     std::string model_path;
@@ -256,7 +276,9 @@ public:
     }
 
     template<typename T>
-    void infer(const std::vector<cv::Mat>& ins, std::vector<cv::Mat>& outs) {
+    void infer(const std::vector<cv::Mat>& ins,
+                     std::vector<cv::Mat>& outs,
+                     std::vector<std::string>&& custom_out_names = {}) {
         // Prepare session
 #ifndef _WIN32
         session = Ort::Session(env, model_path.data(), session_options);
@@ -274,7 +296,7 @@ public:
         std::vector<Ort::Value> in_tensors;
         for(size_t i = 0; i < num_in; ++i) {
             char* in_node_name_p = session.GetInputName(i, allocator);
-            in_node_names.push_back(std::string(in_node_name_p));
+            in_node_names.emplace_back(in_node_name_p);
             allocator.Free(in_node_name_p);
             in_node_dims = toORT(ins[i].size);
             in_tensors.emplace_back(Ort::Value::CreateTensor<T>(memory_info,
@@ -284,14 +306,19 @@ public:
                                                                 in_node_dims.size()));
         }
         // Outputs Run params
-        for(size_t i = 0; i < num_out; ++i) {
-            char* out_node_name_p = session.GetOutputName(i, allocator);
-            out_node_names.push_back(std::string(out_node_name_p));
-            allocator.Free(out_node_name_p);
+        if (custom_out_names.empty()) {
+            for(size_t i = 0; i < num_out; ++i) {
+                char* out_node_name_p = session.GetOutputName(i, allocator);
+                out_node_names.emplace_back(out_node_name_p);
+                allocator.Free(out_node_name_p);
+            }
+        } else {
+            out_node_names = std::move(custom_out_names);
         }
         // Input/output order by names
         const auto in_run_names  = getCharNames(in_node_names);
         const auto out_run_names = getCharNames(out_node_names);
+        num_out = out_run_names.size();
         // Run
         auto result = session.Run(Ort::RunOptions{nullptr},
                                   in_run_names.data(),
@@ -321,8 +348,10 @@ public:
     }
     // One input overload
     template<typename T>
-    void infer(const cv::Mat& in, std::vector<cv::Mat>& outs) {
-        infer<T>(std::vector<cv::Mat>{in}, outs);
+    void infer(const cv::Mat& in,
+                     std::vector<cv::Mat>& outs,
+                     std::vector<std::string>&& custom_out_names = {}) {
+        infer<T>(std::vector<cv::Mat>{in}, outs, std::move(custom_out_names));
     }
 
     void validate() {
@@ -797,6 +826,32 @@ TEST_F(ONNXMediaFrameTest, InferListYUV)
     // Validate
     validate();
 }
+TEST_F(ONNXWithRemap, InferWithDisabledOut)
+{
+    useModel("object_detection_segmentation/faster-rcnn/model/FasterRCNN-10");
+    // Create tensor without batch
+    cv::Mat rand_mat = initMatrixRandU(CV_32FC3, cv::Size{800, 800});
+    std::vector<int> dims = {rand_mat.channels(), rand_mat.rows, rand_mat.cols};
+    cv::Mat in_mat(dims, CV_32F, rand_mat.data);
+    // ONNX_API code
+    infer<float>(in_mat, out_onnx, {"6379", "6383"});
+    // G_API code
+    using FRCNNOUT = std::tuple<cv::GMat, cv::GMat>;
+    G_API_NET(FasterRCNN, <FRCNNOUT(cv::GMat)>, "FasterRCNN");
+    auto net = cv::gapi::onnx::Params<FasterRCNN>{model_path}
+        .cfgOutputLayers({"out1", "out2"})
+        .cfgPostProc({cv::GMatDesc{CV_32F, {1,20}},
+                      cv::GMatDesc{CV_32F, {5}}}, remapRCNNPorts, {"6383", "6379"});
+    cv::GMat in, out1, out2;
+    std::tie(out1, out2) = cv::gapi::infer<FasterRCNN>(in);
+    cv::GComputation comp(cv::GIn(in), cv::GOut(out1, out2));
+    out_gapi.resize(num_out);
+    comp.apply(cv::gin(in_mat),
+               cv::gout(out_gapi[0], out_gapi[1]),
+               cv::compile_args(cv::gapi::networks(net)));
+    // Validate
+    validate();
+}
 
 TEST_F(ONNXMediaFrameTest, InferList2BGR)
 {
@@ -917,6 +972,24 @@ TEST_F(ONNXYoloV3MultiInput, InferBSConstInput)
     // Validate
     validate();
 }
+
+TEST_F(ONNXWithRemap, InferOutReallocation)
+{
+    useModel("object_detection_segmentation/ssd-mobilenetv1/model/ssd_mobilenet_v1_10");
+    // G_API code
+    G_API_NET(MobileNet, <cv::GMat(cv::GMat)>, "ssd_mobilenet");
+    auto net = cv::gapi::onnx::Params<MobileNet>{model_path}
+        .cfgOutputLayers({"detection_boxes"})
+        .cfgPostProc({cv::GMatDesc{CV_32F, {1,100,4}}}, reallocSSDPort);
+    cv::GMat in;
+    cv::GMat out1;
+    out1 = cv::gapi::infer<MobileNet>(in);
+    cv::GComputation comp(cv::GIn(in), cv::GOut(out1));
+    EXPECT_THROW(comp.apply(cv::gin(in_mat1),
+                 cv::gout(out_gapi[0]),
+                 cv::compile_args(cv::gapi::networks(net))), std::exception);
+}
+
 } // namespace opencv_test
 
 #endif //  HAVE_ONNX
