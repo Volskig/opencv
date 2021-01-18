@@ -14,19 +14,19 @@
 
 namespace cv { namespace gapi {
 
-nn::parsers::GDetections parseSSD(const GMat& in,
-                                  const GOpaque<Size>& inSz,
-                                  const float confidenceThreshold,
-                                  const int filterLabel)
+nn::parsers::GDetections parseSSDFBL(const GMat& in,
+                                     const GOpaque<Size>& inSz,
+                                     const float confidenceThreshold,
+                                     const int filterLabel)
 {
     return nn::parsers::GParseSSDBL::on(in, inSz, confidenceThreshold, filterLabel);
 }
 
-nn::parsers::GRects parseSSD(const GMat& in,
-                             const GOpaque<Size>& inSz,
-                             const float confidenceThreshold,
-                             const bool alignmentToSquare,
-                             const bool filterOutOfBounds)
+nn::parsers::GRects parseSSDOOB(const GMat& in,
+                                const GOpaque<Size>& inSz,
+                                const float confidenceThreshold,
+                                const bool alignmentToSquare,
+                                const bool filterOutOfBounds)
 {
     return nn::parsers::GParseSSD::on(in, inSz, confidenceThreshold, alignmentToSquare, filterOutOfBounds);
 }

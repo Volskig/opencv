@@ -2012,7 +2012,7 @@ PERF_TEST_P_(ParseSSDBLPerfTest, TestPerformance)
     // G-API code //////////////////////////////////////////////////////////////
     cv::GMat in;
     cv::GOpaque<cv::Size> op_sz;
-    auto out = cv::gapi::parseSSD(in, op_sz, confidence_threshold, filter_label);
+    auto out = cv::gapi::parseSSDFBL(in, op_sz, confidence_threshold, filter_label);
     cv::GComputation c(cv::GIn(in, op_sz), cv::GOut(std::get<0>(out), std::get<1>(out)));
 
     // Warm-up graph engine:
@@ -2051,7 +2051,7 @@ PERF_TEST_P_(ParseSSDPerfTest, TestPerformance)
     // G-API code //////////////////////////////////////////////////////////////
     cv::GMat in;
     cv::GOpaque<cv::Size> op_sz;
-    auto out = cv::gapi::parseSSD(in, op_sz, confidence_threshold, alignment_to_square, filter_out_of_bounds);
+    auto out = cv::gapi::parseSSDOOB(in, op_sz, confidence_threshold, alignment_to_square, filter_out_of_bounds);
     cv::GComputation c(cv::GIn(in, op_sz), cv::GOut(out));
 
     // Warm-up graph engine:

@@ -52,7 +52,7 @@ namespace parsers {
 /** @brief Parses output of SSD network.
 
 Extracts detection information (box, confidence, label) from SSD output and
-filters it by given confidence and label.
+filters it by given confidence and label. FBL - filter by label.
 
 @note Function textual ID is "org.opencv.nn.parsers.parseSSD_BL"
 
@@ -64,14 +64,15 @@ detection is smaller than confidence threshold, detection is rejected.
 given label will get to the output.
 @return a tuple with a vector of detected boxes and a vector of appropriate labels.
 */
-GAPI_EXPORTS std::tuple<GArray<Rect>, GArray<int>> parseSSD(const GMat& in,
-                                                            const GOpaque<Size>& inSz,
-                                                            const float confidenceThreshold = 0.5f,
-                                                            const int   filterLabel = -1);
+GAPI_EXPORTS std::tuple<GArray<Rect>, GArray<int>> parseSSDFBL(const GMat& in,
+                                                               const GOpaque<Size>& inSz,
+                                                               const float confidenceThreshold = 0.5f,
+                                                               const int   filterLabel = -1);
 
-/** @overload
+/** @brief Parses output of SSD network.
+
 Extracts detection information (box, confidence) from SSD output and
-filters it by given confidence and by going out of bounds.
+filters it by given confidence and by going out of bounds. OOB - filtering out of bounds.
 
 @note Function textual ID is "org.opencv.nn.parsers.parseSSD"
 
@@ -85,11 +86,11 @@ the larger side of the rectangle.
 @param filterOutOfBounds If provided true, out-of-frame boxes are filtered.
 @return a vector of detected bounding boxes.
 */
-GAPI_EXPORTS GArray<Rect> parseSSD(const GMat& in,
-                                   const GOpaque<Size>& inSz,
-                                   const float confidenceThreshold = 0.5f,
-                                   const bool alignmentToSquare = false,
-                                   const bool filterOutOfBounds = false);
+GAPI_EXPORTS GArray<Rect> parseSSDOOB(const GMat& in,
+                                      const GOpaque<Size>& inSz,
+                                      const float confidenceThreshold = 0.5f,
+                                      const bool alignmentToSquare = false,
+                                      const bool filterOutOfBounds = false);
 
 /** @brief Parses output of Yolo network.
 
@@ -127,7 +128,8 @@ namespace cv {
 namespace gapi {
 namespace streaming {
 
-using cv::gapi::parseSSD;
+using cv::gapi::parseSSDFBL;
+using cv::gapi::parseSSDOOB;
 using cv::gapi::parseYolo;
 
 } // namespace streaming

@@ -598,7 +598,7 @@ GAPI_OCV_KERNEL(GCPUParseSSDBL, cv::gapi::nn::parsers::GParseSSDBL)
     }
 };
 
-GAPI_OCV_KERNEL(GOCVParseSSD, cv::gapi::nn::parsers::GParseSSD)
+GAPI_OCV_KERNEL(GCPUParseSSD, cv::gapi::nn::parsers::GParseSSD)
 {
     static void run(const cv::Mat&  in_ssd_result,
                     const cv::Size& in_size,
@@ -715,7 +715,7 @@ cv::gapi::GKernelPackage cv::gapi::core::cpu::kernels()
          , GCPUWarpPerspective
          , GCPUWarpAffine
          , GCPUParseSSDBL
-         , GOCVParseSSD
+         , GCPUParseSSD
          , GCPUParseYolo
          , GCPUSize
          , GCPUSizeR
