@@ -777,7 +777,7 @@ void ONNXCompiled::Run(const std::vector<cv::Mat>& ins,
         // Hard path - run session & user-defined post-processing
         // NOTE: use another list of output names here
         std::vector<const char*> out_names;
-        out_names.reserve(std::max(out_tensor_info.size(), params.names_to_remap.size()));
+        out_names.reserve(outs.size());
         params.names_to_remap.empty()
             ? ade::util::transform(out_tensor_info, std::back_inserter(out_names),
                                    [] (const TensorInfo& ti) { return ti.name.c_str(); })

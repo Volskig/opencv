@@ -141,17 +141,21 @@ inline std::vector<const char*> getCharNames(const std::vector<std::string>& nam
     std::vector<const char*> out_ptrs;
     out_ptrs.reserve(names.size());
     ade::util::transform(names, std::back_inserter(out_ptrs),
-                         [](const std::string& name) { return name.data(); });
+                         [](const std::string& name) { return name.c_str(); });
     return out_ptrs;
 }
 
-template<typename T>
 void copyToOut(const cv::Mat& in, cv::Mat& out) {
     const size_t size = std::min(out.total(), in.total());
-    std::copy(in.begin<T>(), in.begin<T>() + size, out.begin<T>());
+    const size_t byte_size = in.elemSize() * size;
+    const uint8_t* op = in.ptr<uint8_t>();
+          uint8_t* gp = out.ptr<uint8_t>();
+    for (size_t i = 0; i < byte_size; ++i) {
+        gp[i] = op[i];
+    }
     if (size < out.total()) {
-        T* const optr = out.ptr<T>();
-        optr[size] = static_cast<T>(-1); // end data mark
+        int8_t* const optr = out.ptr<int8_t>();
+        optr[byte_size] = static_cast<int8_t>(-1); // end data mark
     }
 }
 
@@ -165,7 +169,7 @@ void remapYolo(const std::unordered_map<std::string, cv::Mat> &onnx,
     // Configured output
     cv::Mat& out = gapi.begin()->second;
     // Simple copy
-    copyToOut<float>(in, out);
+    copyToOut(in, out);
 }
 
 void remapYoloV3(const std::unordered_map<std::string, cv::Mat> &onnx,
@@ -182,9 +186,9 @@ void remapYoloV3(const std::unordered_map<std::string, cv::Mat> &onnx,
     cv::Mat& out_scores = gapi.at("out2");
     cv::Mat& out_indices = gapi.at("out3");
 
-    copyToOut<float>(in_boxes, out_boxes);
-    copyToOut<float>(in_scores, out_scores);
-    copyToOut<int32_t>(in_indices, out_indices);
+    copyToOut(in_boxes, out_boxes);
+    copyToOut(in_scores, out_scores);
+    copyToOut(in_indices, out_indices);
 }
 
 void remapToIESSDOut(const std::vector<cv::Mat> &detections,
@@ -222,7 +226,7 @@ void remapToIESSDOut(const std::vector<cv::Mat> &detections,
 
     if (num_objects < ssd_output.size[2] - 1) {
         // put a -1 mark at the end of output blob if there is space left
-        ptr[0] = -1.f;
+        reinterpret_cast<int8_t *>(ptr)[0] = -1;
     }
 }
 
@@ -248,8 +252,8 @@ void remapRCNNPorts(const std::unordered_map<std::string, cv::Mat> &onnx,
     cv::Mat& out_boxes = gapi.at("out1");
     cv::Mat& out_scores = gapi.at("out2");
 
-    copyToOut<float>(in_boxes, out_boxes);
-    copyToOut<float>(in_scores, out_scores);
+    copyToOut(in_boxes, out_boxes);
+    copyToOut(in_scores, out_scores);
 }
 
 void reallocSSDPort(const std::unordered_map<std::string, cv::Mat> &/*onnx*/,
@@ -281,11 +285,11 @@ public:
                      std::vector<std::string>&& custom_out_names = {}) {
         // Prepare session
 #ifndef _WIN32
-        session = Ort::Session(env, model_path.data(), session_options);
+        session = Ort::Session(env, model_path.c_str(), session_options);
 #else
         std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-        std::wstring w_model_path = converter.from_bytes(model_path.data());
-        session = Ort::Session(env, w_model_path.data(), session_options);
+        std::wstring w_model_path = converter.from_bytes(model_path.c_str());
+        session = Ort::Session(env, w_model_path.c_str(), session_options);
 #endif
         num_in = session.GetInputCount();
         num_out = session.GetOutputCount();
@@ -378,7 +382,7 @@ private:
     std::vector<std::string> out_node_names;
 };
 
-class ONNXClassificationTest : public ONNXtest {
+class ONNXClassification : public ONNXtest {
 public:
     const cv::Scalar mean = { 0.485, 0.456, 0.406 };
     const cv::Scalar std  = { 0.229, 0.224, 0.225 };
@@ -401,7 +405,7 @@ public:
     }
 };
 
-class ONNXMediaFrameTest : public ONNXClassificationTest {
+class ONNXMediaFrame : public ONNXClassification {
 public:
     const std::vector<cv::Rect> rois = {
         cv::Rect(cv::Point{ 0,   0}, cv::Size{80, 120}),
@@ -418,7 +422,7 @@ public:
     }
 };
 
-class ONNXGRayScaleTest : public ONNXtest {
+class ONNXGRayScale : public ONNXtest {
 public:
     void preprocess(const cv::Mat& src, cv::Mat& dst) {
         const int new_h = 64;
@@ -441,12 +445,13 @@ public:
         ASSERT_EQ(out_gapi.size(), out_onnx.size());
         const auto size = out_onnx.size();
         for (size_t i = 0; i < size; ++i) {
-            float* op = out_onnx.at(i).ptr<float>();
-            float* gp = out_gapi.at(i).ptr<float>();
+            uint8_t* op = out_onnx.at(i).ptr<uint8_t>();
+            uint8_t* gp = out_gapi.at(i).ptr<uint8_t>();
             const auto out_size = std::min(out_onnx.at(i).total(), out_gapi.at(i).total());
+            const size_t elem_size = out_gapi.at(i).elemSize();
             GAPI_Assert(out_size != 0u);
-            for (size_t d_idx = 0; d_idx < out_size; ++d_idx) {
-                if (gp[d_idx] == -1) {
+            for (size_t d_idx = 0; d_idx < out_size * elem_size; ++d_idx) {
+                if (static_cast<int8_t>(gp[d_idx]) == -1) {
                     break; // end of detections
                 }
                 ASSERT_EQ(op[d_idx], gp[d_idx]);
@@ -455,7 +460,38 @@ public:
     }
 };
 
-class ONNXYoloV3MultiInput : public ONNXWithRemap {
+class ONNXRCNN : public ONNXWithRemap {
+private:
+    const cv::Scalar rcnn_mean = { 102.9801, 115.9465, 122.7717 };
+    float range_max = 1333;
+    float range_min = 800;
+public:
+    void preprocess(const cv::Mat& src, cv::Mat& dst) {
+        cv::Mat rsz, cvt, chw, mn;
+        const auto get_ratio = [&](const int dim) -> float {
+                                   return ((dim > range_max) || (dim < range_min))
+                                              ? dim > range_max
+                                                  ? range_max / dim
+                                                  : range_min / dim
+                                              : 1.f;
+                               };
+        const auto ratio_h = get_ratio(src.rows);
+        const auto ratio_w = get_ratio(src.cols);
+        const auto new_h = static_cast<int>(ratio_h * src.rows);
+        const auto new_w = static_cast<int>(ratio_w * src.cols);
+        cv::resize(src, rsz, cv::Size(new_w, new_h));
+        rsz.convertTo(cvt, CV_32F, 1.f);
+        toCHW(cvt, chw);
+        mn = chw - rcnn_mean;
+        int padded_h = std::ceil(new_h / 32.f) * 32;
+        int padded_w = std::ceil(new_w / 32.f) * 32;
+        cv::Mat pad_im(cv::Size(padded_w, 3 * padded_h), CV_32F, 0.f);
+        pad_im(cv::Rect(0, 0, mn.cols, mn.rows)) += mn;
+        dst = pad_im.reshape(1, {3, padded_h, padded_w});
+    }
+};
+
+class ONNXYoloV3 : public ONNXWithRemap {
 public:
     std::vector<cv::Mat> ins;
 
@@ -482,7 +518,7 @@ private:
 };
 } // anonymous namespace
 
-TEST_F(ONNXClassificationTest, Infer)
+TEST_F(ONNXClassification, Infer)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     // ONNX_API code
@@ -504,7 +540,7 @@ TEST_F(ONNXClassificationTest, Infer)
     validate();
 }
 
-TEST_F(ONNXClassificationTest, InferTensor)
+TEST_F(ONNXClassification, InferTensor)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     // Create tensor
@@ -525,7 +561,7 @@ TEST_F(ONNXClassificationTest, InferTensor)
     validate();
 }
 
-TEST_F(ONNXClassificationTest, InferROI)
+TEST_F(ONNXClassification, InferROI)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto ROI = rois.at(1);
@@ -549,7 +585,7 @@ TEST_F(ONNXClassificationTest, InferROI)
     validate();
 }
 
-TEST_F(ONNXClassificationTest, InferROIList)
+TEST_F(ONNXClassification, InferROIList)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     // ONNX_API code
@@ -575,7 +611,7 @@ TEST_F(ONNXClassificationTest, InferROIList)
     validate();
 }
 
-TEST_F(ONNXClassificationTest, Infer2ROIList)
+TEST_F(ONNXClassification, Infer2ROIList)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     // ONNX_API code
@@ -627,7 +663,7 @@ TEST_F(ONNXWithRemap, InferDynamicInputTensor)
     validate();
 }
 
-TEST_F(ONNXGRayScaleTest, InferImage)
+TEST_F(ONNXGRayScale, InferImage)
 {
     useModel("body_analysis/emotion_ferplus/model/emotion-ferplus-8");
     // ONNX_API code
@@ -673,7 +709,7 @@ TEST_F(ONNXWithRemap, InferMultiOutput)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferBGR)
+TEST_F(ONNXMediaFrame, InferBGR)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     // ONNX_API code
@@ -696,7 +732,7 @@ TEST_F(ONNXMediaFrameTest, InferBGR)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferYUV)
+TEST_F(ONNXMediaFrame, InferYUV)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto frame = MediaFrame::Create<TestMediaNV12>(m_in_y, m_in_uv);
@@ -721,7 +757,7 @@ TEST_F(ONNXMediaFrameTest, InferYUV)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferROIBGR)
+TEST_F(ONNXMediaFrame, InferROIBGR)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     auto frame = MediaFrame::Create<TestMediaBGR>(in_mat1);
@@ -745,7 +781,7 @@ TEST_F(ONNXMediaFrameTest, InferROIBGR)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferROIYUV)
+TEST_F(ONNXMediaFrame, InferROIYUV)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto frame = MediaFrame::Create<TestMediaNV12>(m_in_y, m_in_uv);
@@ -771,7 +807,7 @@ TEST_F(ONNXMediaFrameTest, InferROIYUV)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferListBGR)
+TEST_F(ONNXMediaFrame, InferListBGR)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto frame = MediaFrame::Create<TestMediaBGR>(in_mat1);
@@ -798,7 +834,7 @@ TEST_F(ONNXMediaFrameTest, InferListBGR)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferListYUV)
+TEST_F(ONNXMediaFrame, InferListYUV)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto frame = MediaFrame::Create<TestMediaNV12>(m_in_y, m_in_uv);
@@ -826,34 +862,32 @@ TEST_F(ONNXMediaFrameTest, InferListYUV)
     // Validate
     validate();
 }
-TEST_F(ONNXWithRemap, InferWithDisabledOut)
+TEST_F(ONNXRCNN, InferWithDisabledOut)
 {
     useModel("object_detection_segmentation/faster-rcnn/model/FasterRCNN-10");
-    // Create tensor without batch
-    cv::Mat rand_mat = initMatrixRandU(CV_32FC3, cv::Size{800, 800});
-    std::vector<int> dims = {rand_mat.channels(), rand_mat.rows, rand_mat.cols};
-    cv::Mat in_mat(dims, CV_32F, rand_mat.data);
+    cv::Mat pp;
+    preprocess(in_mat1, pp);
     // ONNX_API code
-    infer<float>(in_mat, out_onnx, {"6379", "6383"});
+    infer<float>(pp, out_onnx, {"6379", "6383"});
     // G_API code
     using FRCNNOUT = std::tuple<cv::GMat, cv::GMat>;
     G_API_NET(FasterRCNN, <FRCNNOUT(cv::GMat)>, "FasterRCNN");
     auto net = cv::gapi::onnx::Params<FasterRCNN>{model_path}
         .cfgOutputLayers({"out1", "out2"})
-        .cfgPostProc({cv::GMatDesc{CV_32F, {1,20}},
-                      cv::GMatDesc{CV_32F, {5}}}, remapRCNNPorts, {"6383", "6379"});
+        .cfgPostProc({cv::GMatDesc{CV_32F, {7,4}},
+                      cv::GMatDesc{CV_32F, {7}}}, remapRCNNPorts, {"6383", "6379"});
     cv::GMat in, out1, out2;
     std::tie(out1, out2) = cv::gapi::infer<FasterRCNN>(in);
     cv::GComputation comp(cv::GIn(in), cv::GOut(out1, out2));
     out_gapi.resize(num_out);
-    comp.apply(cv::gin(in_mat),
+    comp.apply(cv::gin(pp),
                cv::gout(out_gapi[0], out_gapi[1]),
                cv::compile_args(cv::gapi::networks(net)));
     // Validate
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferList2BGR)
+TEST_F(ONNXMediaFrame, InferList2BGR)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto frame = MediaFrame::Create<TestMediaBGR>(in_mat1);
@@ -880,7 +914,7 @@ TEST_F(ONNXMediaFrameTest, InferList2BGR)
     validate();
 }
 
-TEST_F(ONNXMediaFrameTest, InferList2YUV)
+TEST_F(ONNXMediaFrame, InferList2YUV)
 {
     useModel("classification/squeezenet/model/squeezenet1.0-9");
     const auto frame = MediaFrame::Create<TestMediaNV12>(m_in_y, m_in_uv);
@@ -909,7 +943,7 @@ TEST_F(ONNXMediaFrameTest, InferList2YUV)
     validate();
 }
 
-TEST_F(ONNXYoloV3MultiInput, InferConstInput)
+TEST_F(ONNXYoloV3, InferConstInput)
 {
     useModel("object_detection_segmentation/yolov3/model/yolov3-10");
     // ONNX_API code
@@ -935,7 +969,7 @@ TEST_F(ONNXYoloV3MultiInput, InferConstInput)
     validate();
 }
 
-TEST_F(ONNXYoloV3MultiInput, InferBSConstInput)
+TEST_F(ONNXYoloV3, InferBSConstInput)
 {
     // This test checks the case when a const input is used
     // and all input layer names are specified.
